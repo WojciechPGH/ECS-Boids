@@ -1,46 +1,32 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using Unity.Mathematics;
 
 public class Boid : MonoBehaviour
 {
-    private Vector3 _acceleration;
-    private Vector3 _velocity;
 
-    public Vector3 Velocity => _velocity;
-
-    public void Init(Vector3 position, Vector3 direction, float speed)
+    public void Init(float3 position, float2 direction)
     {
-        _velocity = direction * speed;
-        transform.SetPositionAndRotation(position, GetDirection());
-        _acceleration = Vector3.zero;
+        transform.SetPositionAndRotation(position, GetDirection(direction));
     }
 
-    public void AddForce(Vector3 force, float forceRatio)
+    public void UpdateBoid(Vector3 newPosition, float3 velocity)
     {
-        forceRatio = Mathf.Clamp01(forceRatio);
-        _acceleration += force * forceRatio;
+        transform.rotation = GetDirection(velocity);
+        transform.position = newPosition;
     }
 
-
-    public void UpdateBoid(float maxSpeed)
+    private Quaternion GetDirection(float2 velocity)
     {
-        Quaternion rotation = GetDirection();
-        transform.rotation = rotation;
-        _velocity += _acceleration * maxSpeed;
-        if (_velocity.magnitude > maxSpeed)
-        {
-            _velocity = _velocity.normalized * maxSpeed;
-        }
-        //Vector2 desiredSpeed = _acceleration.normalized * _speed - _velocity;
-        Vector3 translate = Time.deltaTime * _velocity;
-        transform.position += translate;
-        _acceleration = Vector2.zero;
+        float angle = Mathf.Atan2(velocity.y, velocity.x) * Mathf.Rad2Deg;
+        if (angle < 0) angle += 360;
+        return Quaternion.Euler(0f, 0f, angle - 90f);
     }
 
-    private Quaternion GetDirection()
+    private Quaternion GetDirection(float3 velocity)
     {
-        float angle = Mathf.Atan2(_velocity.y, _velocity.x) * Mathf.Rad2Deg;
+        float angle = Mathf.Atan2(velocity.y, velocity.x) * Mathf.Rad2Deg;
         if (angle < 0) angle += 360;
         return Quaternion.Euler(0f, 0f, angle - 90f);
     }

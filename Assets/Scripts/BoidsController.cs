@@ -60,20 +60,19 @@ public class BoidsController : MonoBehaviour
         _boidsPosition = new List<float3>(_numOfBoids);
 
         Boid boid;
-        Vector2 pos;
-        Vector3 boidPos;
-        Vector3 boidsVelocity;
+        float3 pos, boidPos, boidsVelocity;
+        float2 dir;
 
         for (int i = 0; i < _numOfBoids; i++)
         {
-            pos = new Vector2(UnityEngine.Random.value, UnityEngine.Random.value);
-            boidPos = new Vector3(_boundingBox.xMin + _boundingBox.width * pos.x, _boundingBox.yMin + _boundingBox.height * pos.y);
+            pos = new float3(UnityEngine.Random.value, UnityEngine.Random.value, 0f);
+            boidPos = new float3(_boundingBox.xMin + _boundingBox.width * pos.x, _boundingBox.yMin + _boundingBox.height * pos.y, 0f);
             boid = Instantiate(_boidPrefab).GetComponent<Boid>();
-            pos = UnityEngine.Random.insideUnitCircle.normalized;
-            boid.Init(boidPos, pos, _boidMaxSpeed);
+            dir = UnityEngine.Random.insideUnitCircle.normalized;
+            boid.Init(boidPos, dir);
 
             _boidsList.Add(boid);
-            boidsVelocity = pos * _boidMaxSpeed;
+            boidsVelocity = new float3(dir.x, dir.y, 0f) * _boidMaxSpeed;
 
             _boidsAcceleration.Add(float3.zero);
             _boidsVelocity.Add(boidsVelocity);
@@ -90,29 +89,29 @@ public class BoidsController : MonoBehaviour
     {
         float distance;
         float minDistCount, awarenessCount;
-        Vector3 boidPos, neighborPos;
+        float3 boidPos, neighborPos;
 
-        for (int i = 0; i < _boidsList.Count; i++)
+        for (int i = 0; i < _numOfBoids; i++)
         {
-            boidPos = _boidsList[i].transform.position;
-            Vector3 separation = Vector3.zero;
-            Vector3 alignment = Vector3.zero;
-            Vector3 cohesion = Vector3.zero;
+            boidPos = _boidsPosition[i];
+            float3 separation = float3.zero;
+            float3 alignment = float3.zero;
+            float3 cohesion = float3.zero;
             minDistCount = 0;
             awarenessCount = 0;
             for (int j = 0; j < _numOfBoids; j++)
             {
                 if (i == j)
                     continue;
-                neighborPos = _boidsList[j].transform.position;
+                neighborPos = _boidsPosition[j];
                 distance = Distance(boidPos, neighborPos);
                 if (distance > _boidAwarenessRadius)
                     continue;
                 else
                 {
-                    if (IsInFOV(_boidsList[i], boidPos, neighborPos))
+                    if (IsInFOV(_boidsVelocity[i], boidPos, neighborPos))
                     {
-                        alignment += _boidsList[j].Velocity;
+                        alignment += _boidsVelocity[j];
                         cohesion += neighborPos;
                         awarenessCount++;
                     }
@@ -133,45 +132,64 @@ public class BoidsController : MonoBehaviour
                 cohesion /= awarenessCount;
                 cohesion -= boidPos;
             }
-            _boidsList[i].AddForce(separation, 0.65f);
-            _boidsList[i].AddForce(alignment, 0.15f);
-            _boidsList[i].AddForce(cohesion, 0.05f);
-            _boidsList[i].AddForce(Bounding(boidPos), 0.1f);
+
+            AddForce(separation, 0.65f, i);
+            AddForce(alignment, 0.15f, i);
+            AddForce(cohesion, 0.05f, i);
+            AddForce(Bounding(boidPos), 0.5f, i);
+            _boidsVelocity[i] += _boidsAcceleration[i];
+            float vMagnitude = Magnitude(_boidsVelocity[i]);
+            if (vMagnitude > _boidMaxSpeed)
+            {
+                _boidsVelocity[i] = (_boidsVelocity[i] / vMagnitude) * _boidMaxSpeed;
+            }
+            _boidsPosition[i] += _boidsVelocity[i] * Time.deltaTime;
+            _boidsAcceleration[i] = float3.zero;
+            _boidsList[i].UpdateBoid(_boidsPosition[i], _boidsVelocity[i]);
         }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float Magnitude(float3 v)
+    {
+        return (float)Math.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
     }
 
     private void MoveBoids()
     {
-        foreach (Boid boid in _boidsList)
+        for (int i = 0; i < _boidsList.Count; i++)
         {
-            boid.UpdateBoid(_boidMaxSpeed);
+            Boid boid = _boidsList[i];
+            boid.UpdateBoid(_boidsPosition[i], _boidsVelocity[i]);
         }
     }
 
-    private Vector3 GetSeparationVector(Vector3 boid, Vector3 target, float distance)
+    private float3 GetSeparationVector(float3 boid, float3 target, float distance)
     {
         Vector3 diff = boid - target;
-        float ratio = Mathf.Clamp01(1.0f - distance / _boidMinDistance);
+        //float ratio = Mathf.Clamp01(1.0f - distance / _boidMinDistance);
+        float ratio = math.clamp(1f - distance / _boidMinDistance, 0f, 1f);
         return diff.normalized * (ratio / distance);
     }
 
-    private bool IsInFOV(Boid boid, Vector3 boidPos, Vector3 neighborPos)
+    private bool IsInFOV(float3 boidVelocity, float3 boidPos, float3 neighborPos)
     {
-        Vector3 dir = neighborPos - boidPos;
-        float dot = Vector3.Dot(boid.Velocity, dir);
-        if (dot > MathF.Cos(_FoVAngle * Mathf.Deg2Rad))
+        float3 dir = neighborPos - boidPos;
+        //float dot = Vector3.Dot(boidVelocity, dir);
+        float dot = math.dot(boidVelocity, dir);
+        if (dot > math.cos(_FoVAngle * Mathf.Deg2Rad))
         {
             return true;
         }
         return false;
     }
 
-    private Vector3 Bounding(Vector3 boid)
+    private float3 Bounding(float3 boidPos)
     {
-        Vector3 v = Vector3.zero;
+        float3 v = float3.zero;
         float bx, by;
-        bx = boid.x;
-        by = boid.y;
+        bx = boidPos.x;
+        by = boidPos.y;
         if (bx > _boundingBox.xMax)
         {
             v.x = _boundingBox.xMax - bx;
@@ -195,11 +213,16 @@ public class BoidsController : MonoBehaviour
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float Distance(Vector3 a, Vector3 b)
+    private float Distance(float3 a, float3 b)
     {
         float num = a.x - b.x;
         float num2 = a.y - b.y;
         return (float)Math.Sqrt(num * num + num2 * num2);
+    }
+
+    private void AddForce(float3 force, float forceRatio, int boidIndex)
+    {
+        _boidsAcceleration[boidIndex] += force * forceRatio;
     }
 }
 
