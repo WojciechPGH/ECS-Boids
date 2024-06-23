@@ -7,6 +7,8 @@ using Unity.Burst;
 using UnityEngine.Jobs;
 using Unity.Mathematics;
 using Unity.Collections;
+using Unity.Jobs;
+using UnityEngine.UI;
 
 [BurstCompile]
 public class BoidsController : MonoBehaviour
@@ -25,21 +27,56 @@ public class BoidsController : MonoBehaviour
     private Rect _boundingBox;
     [SerializeField]
     private float _FoVAngle = 60;
-    private List<Boid> _boidsList;
-    private List<float3> _boidsAcceleration;
-    private List<float3> _boidsVelocity;
-    private List<float3> _boidsPosition;
+    [SerializeField]
+    private Text debugText;
 
+    private List<Boid> _boidsList;
+    private NativeArray<float3> _boidsVelocity;
+    private NativeArray<float3> _boidsPosition;
+    private TransformAccessArray _boidsTransformArray;
 
     private void Start()
     {
         SetBoundingBox();
         InitBoids();
+        debugText.text = "Number of boids: " + _numOfBoids.ToString();
     }
 
     private void Update()
     {
-        UpdateBoids();
+        //UpdateBoids();
+        NativeArray<float3> outPos = new NativeArray<float3>(_numOfBoids, Allocator.TempJob);
+        NativeArray<float3> outVel = new NativeArray<float3>(_numOfBoids, Allocator.TempJob);
+
+        ControlBoidsJob boidsJob = new()
+        {
+            boidsPosition = _boidsPosition,
+            boidsVelocity = _boidsVelocity,
+            newBoidsPosition = outPos,
+            newBoidsVelocity = outVel,
+            deltaTime = Time.deltaTime,
+            awarenessRadius = _boidAwarenessRadius,
+            fovAngle = _FoVAngle,
+            maxSpeed = _boidMaxSpeed,
+            minDistance = _boidMinDistance,
+            numOfBoids = _numOfBoids,
+            boundary = new float4(_boundingBox.min, _boundingBox.max)
+        };
+
+        JobHandle boidsHandle = boidsJob.Schedule(_numOfBoids, 4);
+        boidsHandle.Complete();
+        outPos.CopyTo(_boidsPosition);
+        outVel.CopyTo(_boidsVelocity);
+        MoveBoids();
+        outPos.Dispose();
+        outVel.Dispose();
+    }
+
+    private void OnDestroy()
+    {
+        _boidsPosition.Dispose();
+        _boidsVelocity.Dispose();
+        _boidsTransformArray.Dispose();
     }
 
     private void SetBoundingBox()
@@ -54,10 +91,10 @@ public class BoidsController : MonoBehaviour
 
     private void InitBoids()
     {
+        Transform[] boidsTransform = new Transform[_numOfBoids];
         _boidsList = new List<Boid>(_numOfBoids);
-        _boidsAcceleration = new List<float3>(_numOfBoids);
-        _boidsVelocity = new List<float3>(_numOfBoids);
-        _boidsPosition = new List<float3>(_numOfBoids);
+        _boidsVelocity = new NativeArray<float3>(_numOfBoids, Allocator.Persistent);
+        _boidsPosition = new NativeArray<float3>(_numOfBoids, Allocator.Persistent);
 
         Boid boid;
         float3 pos, boidPos, boidsVelocity;
@@ -70,167 +107,205 @@ public class BoidsController : MonoBehaviour
             boid = Instantiate(_boidPrefab).GetComponent<Boid>();
             dir = UnityEngine.Random.insideUnitCircle.normalized;
             boid.Init(boidPos, dir);
-
+            boidsTransform[i] = boid.transform;
             _boidsList.Add(boid);
             boidsVelocity = new float3(dir.x, dir.y, 0f) * _boidMaxSpeed;
 
-            _boidsAcceleration.Add(float3.zero);
-            _boidsVelocity.Add(boidsVelocity);
-            _boidsPosition.Add(boidPos);
+            _boidsVelocity[i] = (boidsVelocity);
+            _boidsPosition[i] = (boidPos);
         }
-    }
-    private void UpdateBoids()
-    {
-        BoidsRules();
-        MoveBoids();
+        _boidsTransformArray = new TransformAccessArray(boidsTransform);
     }
 
-    private void BoidsRules()
+
+    private void MoveBoids()
+    {
+        CopyPositionsJob copyPositions = new CopyPositionsJob()
+        {
+            positions = _boidsPosition,
+            velocity = _boidsVelocity
+        };
+
+        JobHandle copyPosJobHandle = copyPositions.Schedule(_boidsTransformArray);
+        copyPosJobHandle.Complete();
+    }
+}
+
+[BurstCompile]
+public struct ControlBoidsJob : IJobParallelFor
+{
+    [ReadOnly]
+    public int numOfBoids;
+    [ReadOnly]
+    public float awarenessRadius;
+    [ReadOnly]
+    public float minDistance;
+    [ReadOnly]
+    public float maxSpeed;
+    [ReadOnly]
+    public float fovAngle;
+    /// <summary>
+    /// x=xmin,y=ymin,z=xmax,w=ymax
+    /// </summary>
+    [ReadOnly]
+    public float4 boundary;
+    [ReadOnly]
+    public float deltaTime;
+    [ReadOnly]
+    public NativeArray<float3> boidsVelocity;
+    [ReadOnly]
+    public NativeArray<float3> boidsPosition;
+    [WriteOnly]
+    public NativeArray<float3> newBoidsVelocity;
+    [WriteOnly]
+    public NativeArray<float3> newBoidsPosition;
+
+
+    public void Execute(int i)
     {
         float distance;
         float minDistCount, awarenessCount;
         float3 boidPos, neighborPos;
 
-        for (int i = 0; i < _numOfBoids; i++)
+        boidPos = boidsPosition[i];
+        float3 separation = float3.zero;
+        float3 alignment = float3.zero;
+        float3 cohesion = float3.zero;
+        minDistCount = 0;
+        awarenessCount = 0;
+        for (int j = 0; j < numOfBoids; j++)
         {
-            boidPos = _boidsPosition[i];
-            float3 separation = float3.zero;
-            float3 alignment = float3.zero;
-            float3 cohesion = float3.zero;
-            minDistCount = 0;
-            awarenessCount = 0;
-            for (int j = 0; j < _numOfBoids; j++)
+            if (i == j)
+                continue;
+            neighborPos = boidsPosition[j];
+            distance = math.distance(boidPos, neighborPos);
+            if (distance > awarenessRadius)
+                continue;
+            else
             {
-                if (i == j)
-                    continue;
-                neighborPos = _boidsPosition[j];
-                distance = Distance(boidPos, neighborPos);
-                if (distance > _boidAwarenessRadius)
-                    continue;
-                else
+                if (IsInFOV(boidsVelocity[i], boidPos, neighborPos))
                 {
-                    if (IsInFOV(_boidsVelocity[i], boidPos, neighborPos))
-                    {
-                        alignment += _boidsVelocity[j];
-                        cohesion += neighborPos;
-                        awarenessCount++;
-                    }
-                    if (distance < _boidMinDistance)
-                    {
-                        separation += GetSeparationVector(boidPos, neighborPos, distance);
-                        minDistCount++;
-                    }
+                    alignment += boidsVelocity[j];
+                    cohesion += neighborPos;
+                    awarenessCount++;
+                }
+                if (distance < minDistance)
+                {
+                    separation += GetSeparationVector(boidPos, neighborPos, distance);
+                    minDistCount++;
                 }
             }
-            if (minDistCount > 1)
-            {
-                separation /= minDistCount;
-            }
-            if (awarenessCount > 0)
-            {
-                alignment /= awarenessCount;
-                cohesion /= awarenessCount;
-                cohesion -= boidPos;
-            }
-
-            AddForce(separation, 0.65f, i);
-            AddForce(alignment, 0.15f, i);
-            AddForce(cohesion, 0.05f, i);
-            AddForce(Bounding(boidPos), 0.5f, i);
-            _boidsVelocity[i] += _boidsAcceleration[i];
-            float vMagnitude = Magnitude(_boidsVelocity[i]);
-            if (vMagnitude > _boidMaxSpeed)
-            {
-                _boidsVelocity[i] = (_boidsVelocity[i] / vMagnitude) * _boidMaxSpeed;
-            }
-            _boidsPosition[i] += _boidsVelocity[i] * Time.deltaTime;
-            _boidsAcceleration[i] = float3.zero;
-            _boidsList[i].UpdateBoid(_boidsPosition[i], _boidsVelocity[i]);
         }
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float Magnitude(float3 v)
-    {
-        return (float)Math.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-    }
-
-    private void MoveBoids()
-    {
-        for (int i = 0; i < _boidsList.Count; i++)
+        if (minDistCount > 1)
         {
-            Boid boid = _boidsList[i];
-            boid.UpdateBoid(_boidsPosition[i], _boidsVelocity[i]);
+            separation /= minDistCount;
         }
-    }
-
-    private float3 GetSeparationVector(float3 boid, float3 target, float distance)
-    {
-        Vector3 diff = boid - target;
-        //float ratio = Mathf.Clamp01(1.0f - distance / _boidMinDistance);
-        float ratio = math.clamp(1f - distance / _boidMinDistance, 0f, 1f);
-        return diff.normalized * (ratio / distance);
-    }
-
-    private bool IsInFOV(float3 boidVelocity, float3 boidPos, float3 neighborPos)
-    {
-        float3 dir = neighborPos - boidPos;
-        //float dot = Vector3.Dot(boidVelocity, dir);
-        float dot = math.dot(boidVelocity, dir);
-        if (dot > math.cos(_FoVAngle * Mathf.Deg2Rad))
+        if (awarenessCount > 0)
         {
-            return true;
+            alignment /= awarenessCount;
+            cohesion /= awarenessCount;
+            cohesion -= boidPos;
         }
-        return false;
+        float3 acceleration = float3.zero;
+        acceleration += AddForce(separation, 0.65f);
+        acceleration += AddForce(alignment, 0.15f);
+        acceleration += AddForce(cohesion, 0.05f);
+        acceleration += AddForce(Bounding(boidPos), 0.5f);
+        float vMagnitude = Magnitude(boidsVelocity[i] + acceleration);
+        if (vMagnitude > maxSpeed)
+        {
+            newBoidsVelocity[i] = (boidsVelocity[i] / vMagnitude) * maxSpeed;
+        }
+        else
+        {
+            newBoidsVelocity[i] = boidsVelocity[i] + acceleration;
+        }
+        newBoidsPosition[i] = boidsPosition[i] + (boidsVelocity[i] + acceleration) * deltaTime;
     }
 
-    private float3 Bounding(float3 boidPos)
+
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="boundary">x=xmin, y=ymin, z=xmax, w=ymax</param>
+    /// <param name="boidPos"></param>
+    /// <returns></returns>
+    private readonly float3 Bounding(float3 boidPos)
     {
         float3 v = float3.zero;
         float bx, by;
         bx = boidPos.x;
         by = boidPos.y;
-        if (bx > _boundingBox.xMax)
+        if (bx > boundary.z)
         {
-            v.x = _boundingBox.xMax - bx;
+            v.x = boundary.z - bx;
         }
         else
-        if (bx < _boundingBox.xMin)
+        if (bx < boundary.x)
         {
-            v.x = _boundingBox.xMin - bx;
+            v.x = boundary.x - bx;
         }
-        if (by > _boundingBox.yMax)
+        if (by > boundary.w)
         {
-            v.y = _boundingBox.yMax - by;
+            v.y = boundary.w - by;
         }
         else
-        if (by < _boundingBox.yMin)
+        if (by < boundary.y)
         {
-            v.y = _boundingBox.yMin - by;
+            v.y = boundary.y - by;
         }
         v *= 8f;
         return v;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float Distance(float3 a, float3 b)
+    private readonly float3 AddForce(float3 force, float forceRatio)
     {
-        float num = a.x - b.x;
-        float num2 = a.y - b.y;
-        return (float)Math.Sqrt(num * num + num2 * num2);
+        return force * forceRatio;
     }
 
-    private void AddForce(float3 force, float forceRatio, int boidIndex)
+    private readonly bool IsInFOV(float3 boidVelocity, float3 boidPos, float3 neighborPos)
     {
-        _boidsAcceleration[boidIndex] += force * forceRatio;
+        float3 dir = neighborPos - boidPos;
+        float dot = math.dot(boidVelocity, dir);
+        if (dot > math.cos(fovAngle * Mathf.Deg2Rad))
+        {
+            return true;
+        }
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private readonly float Magnitude(float3 v)
+    {
+        return (float)Math.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    }
+
+    private readonly float3 GetSeparationVector(float3 boid, float3 target, float distance)
+    {
+        float3 diff = boid - target;
+        float ratio = math.clamp(1f - distance / minDistance, 0f, 1f);
+        return math.normalize(diff) * (ratio / distance);
     }
 }
 
 [BurstCompile]
-public struct ControlBoidsJob : IJobParallelForTransform
+public struct CopyPositionsJob : IJobParallelForTransform
 {
+    [ReadOnly]
+    public NativeArray<float3> positions;
+    [ReadOnly]
+    public NativeArray<float3> velocity;
+
     public void Execute(int index, TransformAccess transform)
     {
-        throw new NotImplementedException();
+        transform.position = positions[index];
+        transform.rotation = GetDirection(velocity[index]);
+    }
+
+    private readonly quaternion GetDirection(float3 velocity)
+    {
+        float angle = math.atan2(velocity.y, velocity.x);
+        return quaternion.Euler(0f, 0f, angle - math.PIHALF);
     }
 }
