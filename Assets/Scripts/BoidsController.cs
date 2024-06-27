@@ -16,6 +16,8 @@ public class BoidsController : MonoBehaviour
     [SerializeField]
     private GameObject _boidPrefab;
     [SerializeField]
+    private Material _boidMaterial;
+    [SerializeField]
     private float _boidMaxSpeed;
     [SerializeField, Range(0.1f, 1f)]
     private float _boidMinDistance;
@@ -30,13 +32,15 @@ public class BoidsController : MonoBehaviour
     [SerializeField]
     private Text debugText;
 
-    private List<Boid> _boidsList;
+    //private List<Boid> _boidsList;
     private NativeArray<float3> _boidsVelocity;
     private NativeArray<float3> _boidsPosition;
-    private TransformAccessArray _boidsTransformArray;
+    //private TransformAccessArray _boidsTransformArray;
+    private BoidsRendering _boidsRendering;
 
     private void Start()
     {
+        _boidsRendering = new BoidsRendering(_boidMaterial, _numOfBoids);
         SetBoundingBox();
         InitBoids();
         debugText.text = "Number of boids: " + _numOfBoids.ToString();
@@ -67,7 +71,8 @@ public class BoidsController : MonoBehaviour
         boidsHandle.Complete();
         outPos.CopyTo(_boidsPosition);
         outVel.CopyTo(_boidsVelocity);
-        MoveBoids();
+        //MoveBoids();
+        _boidsRendering.DrawBoids(_boidsPosition, _boidsVelocity);
         outPos.Dispose();
         outVel.Dispose();
     }
@@ -76,7 +81,7 @@ public class BoidsController : MonoBehaviour
     {
         _boidsPosition.Dispose();
         _boidsVelocity.Dispose();
-        _boidsTransformArray.Dispose();
+        //_boidsTransformArray.Dispose();
     }
 
     private void SetBoundingBox()
@@ -91,12 +96,12 @@ public class BoidsController : MonoBehaviour
 
     private void InitBoids()
     {
-        Transform[] boidsTransform = new Transform[_numOfBoids];
-        _boidsList = new List<Boid>(_numOfBoids);
+        //Transform[] boidsTransform = new Transform[_numOfBoids];
+        //_boidsList = new List<Boid>(_numOfBoids);
         _boidsVelocity = new NativeArray<float3>(_numOfBoids, Allocator.Persistent);
         _boidsPosition = new NativeArray<float3>(_numOfBoids, Allocator.Persistent);
 
-        Boid boid;
+        //Boid boid;
         float3 pos, boidPos, boidsVelocity;
         float2 dir;
 
@@ -104,31 +109,31 @@ public class BoidsController : MonoBehaviour
         {
             pos = new float3(UnityEngine.Random.value, UnityEngine.Random.value, 0f);
             boidPos = new float3(_boundingBox.xMin + _boundingBox.width * pos.x, _boundingBox.yMin + _boundingBox.height * pos.y, 0f);
-            boid = Instantiate(_boidPrefab).GetComponent<Boid>();
+            //boid = Instantiate(_boidPrefab).GetComponent<Boid>();
             dir = UnityEngine.Random.insideUnitCircle.normalized;
-            boid.Init(boidPos, dir);
-            boidsTransform[i] = boid.transform;
-            _boidsList.Add(boid);
+            //boid.Init(boidPos, dir);
+            //boidsTransform[i] = boid.transform;
+            //_boidsList.Add(boid);
             boidsVelocity = new float3(dir.x, dir.y, 0f) * _boidMaxSpeed;
 
             _boidsVelocity[i] = (boidsVelocity);
             _boidsPosition[i] = (boidPos);
         }
-        _boidsTransformArray = new TransformAccessArray(boidsTransform);
+        //_boidsTransformArray = new TransformAccessArray(boidsTransform);
     }
 
 
-    private void MoveBoids()
-    {
-        CopyPositionsJob copyPositions = new CopyPositionsJob()
-        {
-            positions = _boidsPosition,
-            velocity = _boidsVelocity
-        };
+    //private void MoveBoids()
+    //{
+    //    CopyPositionsJob copyPositions = new CopyPositionsJob()
+    //    {
+    //        positions = _boidsPosition,
+    //        velocity = _boidsVelocity
+    //    };
 
-        JobHandle copyPosJobHandle = copyPositions.Schedule(_boidsTransformArray);
-        copyPosJobHandle.Complete();
-    }
+    //    JobHandle copyPosJobHandle = copyPositions.Schedule(_boidsTransformArray);
+    //    copyPosJobHandle.Complete();
+    //}
 }
 
 [BurstCompile]
@@ -299,8 +304,7 @@ public struct CopyPositionsJob : IJobParallelForTransform
 
     public void Execute(int index, TransformAccess transform)
     {
-        transform.position = positions[index];
-        transform.rotation = GetDirection(velocity[index]);
+        transform.SetPositionAndRotation(positions[index], GetDirection(velocity[index]));
     }
 
     private readonly quaternion GetDirection(float3 velocity)

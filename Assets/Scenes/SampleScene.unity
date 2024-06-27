@@ -158,6 +158,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _boidPrefab: {fileID: 3889620862343862637, guid: 62f8cb434aa7b78408746ab08bc6a757, type: 3}
+  _boidMaterial: {fileID: 2100000, guid: f525a8d2777ef9b499094e31738464c5, type: 2}
   _boidMaxSpeed: 1.5
   _boidMinDistance: 0.3
   _boidAwarenessRadius: 1
