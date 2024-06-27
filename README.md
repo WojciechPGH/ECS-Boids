@@ -347,7 +347,7 @@ Rendering is now done via Graphics.RenderMeshInstanced, no need for transform jo
     }
 ```
 </details>
-2000 boids - got fps increase from 76 avg to 121 avg fps:
+2000 boids - got fps increase from 76 avg to 125 avg fps:
 <br><img src="https://github.com/WojciechPGH/ECS-Boids/assets/52805836/93e78b8d-a738-4375-af14-eb6e179586ef" width="60%">
 
 ### 5. TODO:
