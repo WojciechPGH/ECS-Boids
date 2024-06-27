@@ -138,7 +138,7 @@ private void BoidsRules()
 <img src="https://github.com/WojciechPGH/ECS-Boids/assets/52805836/be43a669-d005-42c6-8bc7-e2e7489556c5" width="45%">
 <br>Thanks to this approach I eliminated massive 80000! Transform.get_position calls, Component.get_transform with 40000 calls and 80000 calls from casting Vector3 to Vector2.
 
-### 3. Parallelization
+### 3. Parallelization:
 <br>Changed lists to NativeArrays, created two jobs, one to handle boids positions and rotations, second for updating game objects, added burst compiler
 <details>
 <summary>Boids logic job:</summary>
@@ -307,3 +307,50 @@ Outcome: from 117 avg fps to 159 with 200 boids
 <br>2000 boids
 <br><img src="https://github.com/WojciechPGH/ECS-Boids/assets/52805836/f5dffd96-795c-4120-92f6-ce64bff72c4f" width="45%">
 
+### 4. Getting rid of game objects:
+Rendering is now done via Graphics.RenderMeshInstanced, no need for transform job
+<details>
+<summary>Boids renderer code:</summary>
+    
+```C#
+    public class BoidsRendering
+    {
+        private readonly Material _material;
+        private readonly Mesh _mesh;
+        private readonly int _numInstances;
+        private NativeArray<Matrix4x4> _transforms;
+        public BoidsRendering(Material material, int numInstances)
+        {
+            _mesh = CreateMesh(0.15f, 0.3f);
+            _material = material;
+            _numInstances = numInstances;
+            _transforms = new NativeArray<Matrix4x4>(numInstances, Allocator.Persistent);
+        }
+    
+        public void DrawBoids(NativeArray<float3> positions, NativeArray<float3> velocity)
+        {
+            RenderParams rp = new(_material)
+            {
+                worldBounds = new Bounds(Vector3.zero, 100f * Vector3.one), // use tighter bounds for better FOV culling
+                matProps = new MaterialPropertyBlock()
+            };
+    
+    
+            for (int i = 0; i < _numInstances; ++i)
+            {
+                Quaternion rot = GetDirection(velocity[i]);
+                _transforms[i] = Matrix4x4.TRS(positions[i], rot, Vector3.one);
+            }
+            Graphics.RenderMeshInstanced(rp, _mesh, 0, _transforms);
+        }
+        ...
+    }
+```
+</details>
+2000 boids - got fps increase from 76 avg to 121 avg fps:
+<br><img src="https://github.com/WojciechPGH/ECS-Boids/assets/52805836/bfc351b6-09fe-4234-a61b-8540bd650505" width="60%">
+
+### 5. TODO:
+    -Quadtree
+    -DBSCAN 
+    -Compute shader
